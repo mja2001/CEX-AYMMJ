@@ -1,0 +1,85 @@
+import ccxt
+import pandas as pd
+import pandas_ta as ta
+import time
+
+# Exchange setup (replace with your API keys)
+exchange = ccxt.binance({
+    'apiKey': 'YOUR_BINANCE_API_KEY',
+    'secret': 'YOUR_BINANCE_SECRET',
+    'enableRateLimit': True,
+})
+
+# Bot configuration
+symbols = ['SOL/USDT', 'ETH/USDT', 'SUI/USDT']  # Tokens to trade
+timeframe = '1h'  # Hourly data
+total_capital = 1000  # Your total USDT capital
+risk_per_trade_percent = 0.02  # Risk 2% per trade
+stop_loss_multiplier = 1.5  # ATR multiplier for stop-loss
+check_interval = 3600  # Check every hour (in seconds)
+
+def fetch_data(symbol):
+    bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=200)
+    df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    return df
+
+def compute_indicators(df):
+    df.ta.adx(length=14, append=True)  # ADX for trend strength
+    df.ta.atr(length=14, append=True)  # ATR for volatility
+    return df
+
+def generate_signal(df, symbol):
+    last_row = df.iloc[-1]
+    current_price = last_row['close']
+    current_adx = last_row['ADX_14']
+    current_dmp = last_row['DMP_14']  # +DI
+    current_dmn = last_row['DMN_14']  # -DI
+    current_atr = last_row['ATRr_14']
+
+    risk_per_trade_amount = total_capital * risk_per_trade_percent
+
+    # Buy signal: Strong uptrend
+    if current_adx > 25 and current_dmp > current_dmn:
+        stop_loss_price = current_price - (stop_loss_multiplier * current_atr)
+        risk_per_unit = current_price - stop_loss_price
+        if risk_per_unit > 0:
+            position_size = risk_per_trade_amount / risk_per_unit
+            print(f"[{symbol}] BUY Signal: Price={current_price:.2f}, Position Size={position_size:.4f}")
+            return 'buy', position_size, stop_loss_price
+
+    # Sell signal: Strong downtrend (for simplicity; add your own exit logic)
+    elif current_adx > 25 and current_dmn > current_dmp:
+        print(f"[{symbol}] SELL Signal: Price={current_price:.2f}")
+        return 'sell', None, None
+
+    return None, None, None
+
+def execute_trade(symbol, side, amount, stop_loss=None):
+    try:
+        if side == 'buy':
+            order = exchange.create_market_buy_order(symbol, amount)
+            print(f"[{symbol}] Bought {amount} at market price. Order: {order}")
+            # Optionally set stop-loss order (Binance supports OCO orders)
+        elif side == 'sell':
+            # Fetch your balance and sell all (adapt as needed)
+            balance = exchange.fetch_balance()[symbol.split('/')[0]]
+            order = exchange.create_market_sell_order(symbol, balance['free'])
+            print(f"[{symbol}] Sold at market price. Order: {order}")
+    except Exception as e:
+        print(f"Error executing trade for {symbol}: {e}")
+
+def run_bot():
+    while True:
+        for symbol in symbols:
+            df = fetch_data(symbol)
+            df = compute_indicators(df)
+            signal, amount, stop_loss = generate_signal(df, symbol)
+            if signal == 'buy':
+                execute_trade(symbol, 'buy', amount, stop_loss)
+            elif signal == 'sell':
+                execute_trade(symbol, 'sell', None)
+        time.sleep(check_interval)
+
+if __name__ == "__main__":
+    run_bot()
