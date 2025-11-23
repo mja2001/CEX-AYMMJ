@@ -1,0 +1,8 @@
+ccxt
+pandas
+pandas_ta
+web3
+solana
+solders
+pysui
+requests
